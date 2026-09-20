@@ -1,160 +1,78 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-const monthNames = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
-];
-const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const STORAGE_KEY = 'monthly-todo-tasks';
-const THEME_KEY = 'monthly-todo-theme';
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const TASKS_KEY = 'daylight-tasks-v2';
+const THEME_KEY = 'daylight-theme';
+const CATEGORIES = ['Personal', 'Work', 'Health', 'Shopping'];
+const PRIORITIES = ['Low', 'Medium', 'High'];
 
-function formatDateKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function addDays(date, amount) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + amount);
-  return next;
-}
-
-function makeId() {
-  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-}
-
-function readTasks() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    return Array.isArray(saved) ? saved : [];
-  } catch {
-    return [];
-  }
-}
+const dateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const addDays = (date, count) => { const next = new Date(date); next.setDate(next.getDate() + count); return next; };
+const id = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+const readTasks = () => { try { const value = JSON.parse(localStorage.getItem(TASKS_KEY) || '[]'); return Array.isArray(value) ? value : []; } catch { return []; } };
 
 function App() {
-  const today = new Date();
-  const todayKey = formatDateKey(today);
-  const [currentMonth, setCurrentMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [taskInput, setTaskInput] = useState('');
-  const [repeatDays, setRepeatDays] = useState('1');
+  const now = new Date();
+  const [month, setMonth] = useState(new Date(now.getFullYear(), now.getMonth(), 1));
+  const [selected, setSelected] = useState(now);
   const [tasks, setTasks] = useState(readTasks);
-  const [editingId, setEditingId] = useState(null);
-  const [editText, setEditText] = useState('');
-  const [draggedId, setDraggedId] = useState(null);
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem(THEME_KEY) === 'dark');
+  const [input, setInput] = useState('');
+  const [category, setCategory] = useState('Personal');
+  const [priority, setPriority] = useState('Medium');
+  const [repeat, setRepeat] = useState(1);
+  const [editing, setEditing] = useState(null);
+  const [editValue, setEditValue] = useState('');
+  const [dragged, setDragged] = useState(null);
+  const [dark, setDark] = useState(() => localStorage.getItem(THEME_KEY) === 'dark');
+  const fileInput = useRef(null);
 
-  useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)), [tasks]);
-  useEffect(() => localStorage.setItem(THEME_KEY, darkMode ? 'dark' : 'light'), [darkMode]);
+  useEffect(() => localStorage.setItem(TASKS_KEY, JSON.stringify(tasks)), [tasks]);
+  useEffect(() => localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'), [dark]);
 
-  const selectedKey = formatDateKey(selectedDate);
-  const selectedTasks = tasks.filter((task) => task.date === selectedKey);
-  const completedCount = tasks.filter((task) => task.date === selectedKey && task.completed).length;
-  const monthTaskCount = tasks.filter((task) => {
-    const date = new Date(`${task.date}T00:00:00`);
-    return date.getFullYear() === currentMonth.getFullYear() && date.getMonth() === currentMonth.getMonth();
-  }).length;
+  const selectedKey = dateKey(selected);
+  const dayTasks = tasks.filter((task) => task.date === selectedKey).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const monthTasks = tasks.filter((task) => { const date = new Date(`${task.date}T00:00:00`); return date.getFullYear() === month.getFullYear() && date.getMonth() === month.getMonth(); });
+  const doneCount = dayTasks.filter((task) => task.completed).length;
 
-  const monthDays = useMemo(() => {
-    const firstDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
-    const totalDays = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate();
-    const cells = Array.from({ length: Math.ceil((firstDay.getDay() + totalDays) / 7) * 7 }, (_, index) => {
-      const dayNumber = index - firstDay.getDay() + 1;
-      return dayNumber > 0 && dayNumber <= totalDays
-        ? new Date(currentMonth.getFullYear(), currentMonth.getMonth(), dayNumber)
-        : null;
+  const calendar = useMemo(() => {
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const total = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+    return Array.from({ length: Math.ceil((first.getDay() + total) / 7) * 7 }, (_, index) => {
+      const day = index - first.getDay() + 1;
+      return day > 0 && day <= total ? new Date(month.getFullYear(), month.getMonth(), day) : null;
     });
-    return cells;
-  }, [currentMonth]);
-
-  const tasksForDate = (date) => tasks.filter((task) => task.date === formatDateKey(date));
+  }, [month]);
 
   const addTask = () => {
-    const text = taskInput.trim();
+    const text = input.trim();
     if (!text) return;
-    const count = Math.max(1, Math.min(365, Number(repeatDays) || 1));
-    const seriesId = makeId();
-    const created = Array.from({ length: count }, (_, index) => ({
-      id: makeId(),
-      seriesId,
-      text,
-      date: formatDateKey(addDays(selectedDate, index)),
-      completed: false,
-      order: Date.now() + index,
-      autoGenerated: index > 0
+    const series = id();
+    const created = Array.from({ length: Math.max(1, Math.min(365, Number(repeat))) }, (_, index) => ({
+      id: id(), seriesId: series, text, category, priority, completed: false,
+      date: dateKey(addDays(selected, index)), order: Date.now() + index, autoGenerated: index > 0
     }));
-    setTasks((previous) => [...previous, ...created]);
-    setTaskInput('');
-    setRepeatDays('1');
+    setTasks((current) => [...current, ...created]);
+    setInput(''); setRepeat(1);
   };
 
-  const toggleTask = (id) => setTasks((previous) => previous.map((task) => task.id === id ? { ...task, completed: !task.completed } : task));
+  const toggle = (taskId) => setTasks((current) => current.map((task) => task.id === taskId ? { ...task, completed: !task.completed } : task));
+  const remove = (taskId) => setTasks((current) => { const task = current.find((item) => item.id === taskId); return current.filter((item) => item.id !== taskId && (!task?.seriesId || item.seriesId !== task.seriesId)); });
+  const saveEdit = (taskId) => { if (!editValue.trim()) return; setTasks((current) => current.map((task) => task.id === taskId ? { ...task, text: editValue.trim() } : task)); setEditing(null); };
+  const reorder = (targetId) => { if (!dragged || dragged === targetId) return; setTasks((current) => { const ordered = [...dayTasks]; const from = ordered.findIndex((task) => task.id === dragged); const to = ordered.findIndex((task) => task.id === targetId); const [item] = ordered.splice(from, 1); ordered.splice(to, 0, item); const ids = new Map(ordered.map((task, index) => [task.id, index])); return current.map((task) => ids.has(task.id) ? { ...task, order: ids.get(task.id) } : task); }); };
 
-  const removeTask = (id) => setTasks((previous) => {
-    const target = previous.find((task) => task.id === id);
-    if (!target) return previous;
-    return previous.filter((task) => task.id !== id && !(target.seriesId && task.seriesId === target.seriesId));
-  });
+  const exportTasks = () => { const blob = new Blob([JSON.stringify(tasks, null, 2)], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'daylight-tasks.json'; link.click(); URL.revokeObjectURL(link.href); };
+  const importTasks = (event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { const imported = JSON.parse(reader.result); if (Array.isArray(imported)) setTasks(imported); } catch { window.alert('Please select a valid Daylight JSON export.'); } }; reader.readAsText(file); event.target.value = ''; };
+  const today = () => { setMonth(new Date(now.getFullYear(), now.getMonth(), 1)); setSelected(now); };
 
-  const saveEdit = (id) => {
-    const text = editText.trim();
-    if (!text) return;
-    setTasks((previous) => previous.map((task) => task.id === id ? { ...task, text } : task));
-    setEditingId(null);
-  };
-
-  const moveTask = (fromId, toId) => {
-    if (!fromId || fromId === toId) return;
-    setTasks((previous) => {
-      const dayTasks = previous.filter((task) => task.date === selectedKey);
-      const otherTasks = previous.filter((task) => task.date !== selectedKey);
-      const fromIndex = dayTasks.findIndex((task) => task.id === fromId);
-      const toIndex = dayTasks.findIndex((task) => task.id === toId);
-      if (fromIndex < 0 || toIndex < 0) return previous;
-      const reordered = [...dayTasks];
-      const [moved] = reordered.splice(fromIndex, 1);
-      reordered.splice(toIndex, 0, moved);
-      return [...otherTasks, ...reordered.map((task, index) => ({ ...task, order: index }))];
-    });
-  };
-
-  const goToToday = () => {
-    setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
-    setSelectedDate(today);
-  };
-
-  return (
-    <main className={`app-shell ${darkMode ? 'dark' : ''}`}>
-      <div className="background-orb orb-one" />
-      <div className="background-orb orb-two" />
-      <section className="todo-card">
-        <header className="app-header">
-          <div className="brand"><span className="brand-mark">✓</span><div><p className="eyebrow">PERSONAL PLANNER</p><h1>Daylight</h1></div></div>
-          <div className="header-actions"><button className="ghost-button" onClick={goToToday}>Today</button><button className="icon-button" onClick={() => setDarkMode((value) => !value)} aria-label="Toggle dark mode">{darkMode ? '☀' : '☾'}</button></div>
-        </header>
-
-        <div className="content-grid">
-          <section className="calendar-panel">
-            <div className="month-toolbar"><button className="nav-button" onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1))}>‹</button><div><p className="eyebrow">YOUR SCHEDULE</p><h2>{monthNames[currentMonth.getMonth()]} <span>{currentMonth.getFullYear()}</span></h2></div><button className="nav-button" onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1))}>›</button></div>
-            <div className="weekday-row">{weekdayLabels.map((label) => <div key={label}>{label}</div>)}</div>
-            <div className="calendar-grid">{monthDays.map((day, index) => {
-              if (!day) return <div key={`empty-${index}`} className="day-box empty" />;
-              const key = formatDateKey(day); const dayTasks = tasksForDate(day);
-              return <button key={key} className={`day-box ${key === selectedKey ? 'selected' : ''} ${key === todayKey ? 'today' : ''}`} onClick={() => setSelectedDate(day)}><span className="day-number">{day.getDate()}</span><div className="task-dots">{dayTasks.slice(0, 4).map((task) => <i key={task.id} className={task.completed ? 'done' : ''} />)}</div>{dayTasks.length > 4 && <small>+{dayTasks.length - 4}</small>}</button>;
-            })}</div>
-          </section>
-
-          <aside className="tasks-panel">
-            <div className="selected-heading"><div><p className="eyebrow">TASKS FOR</p><h2>{selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</h2></div><div className="progress-ring"><strong>{completedCount}</strong><span>/{selectedTasks.length}</span></div></div>
-            <div className="task-entry"><input value={taskInput} onChange={(event) => setTaskInput(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addTask()} placeholder="What needs to be done?" aria-label="New task" /><button className="primary-button" onClick={addTask}>Add task</button></div>
-            <div className="repeat-row"><span>Repeat for next</span><select value={repeatDays} onChange={(event) => setRepeatDays(event.target.value)}><option value="1">Only this day</option><option value="3">3 days</option><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option></select></div>
-            <div className="task-list">{selectedTasks.length === 0 ? <div className="empty-state"><span>✦</span><strong>Your day is clear</strong><p>Add a task to get started.</p></div> : [...selectedTasks].sort((a, b) => a.order - b.order).map((task) => <article key={task.id} className={`task-item ${task.completed ? 'completed' : ''}`} draggable onDragStart={() => setDraggedId(task.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => moveTask(draggedId, task.id)}><button className="check-button" onClick={() => toggleTask(task.id)} aria-label="Complete task">{task.completed ? '✓' : ''}</button>{editingId === task.id ? <input className="edit-input" autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveEdit(task.id); if (event.key === 'Escape') setEditingId(null); }} onBlur={() => saveEdit(task.id)} /> : <span className="task-text">{task.text}{task.autoGenerated && <small> recurring</small>}</span>}<div className="task-actions"><button onClick={() => { setEditingId(task.id); setEditText(task.text); }} aria-label="Edit task">✎</button><button onClick={() => removeTask(task.id)} aria-label="Delete task">×</button></div></article>)}</div>
-            <footer className="tasks-footer"><span>{monthTaskCount} tasks this month</span><span>⋮⋮ drag to reorder</span></footer>
-          </aside>
-        </div>
-      </section>
-    </main>
-  );
+  return <main className={`app-shell ${dark ? 'dark' : ''}`}>
+    <div className="background-orb orb-one" /><div className="background-orb orb-two" />
+    <section className="todo-card">
+      <header className="app-header"><div className="brand"><span className="brand-mark">✓</span><div><p className="eyebrow">PERSONAL PLANNER</p><h1>Daylight</h1></div></div><div className="header-actions"><button className="ghost-button" onClick={today}>Today</button><button className="ghost-button" onClick={exportTasks}>Export</button><button className="ghost-button" onClick={() => fileInput.current?.click()}>Import</button><input ref={fileInput} hidden type="file" accept="application/json" onChange={importTasks} /><button className="icon-button" onClick={() => setDark((value) => !value)} aria-label="Toggle dark mode">{dark ? '☀' : '☾'}</button></div></header>
+      <div className="content-grid"><section className="calendar-panel"><div className="month-toolbar"><button className="nav-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button><div><p className="eyebrow">YOUR SCHEDULE</p><h2>{MONTHS[month.getMonth()]} <span>{month.getFullYear()}</span></h2></div><button className="nav-button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button></div><div className="weekday-row">{WEEKDAYS.map((day) => <div key={day}>{day}</div>)}</div><div className="calendar-grid">{calendar.map((day, index) => { if (!day) return <div className="day-box empty" key={`empty-${index}`} />; const key = dateKey(day); const items = tasks.filter((task) => task.date === key); return <button className={`day-box ${key === selectedKey ? 'selected' : ''} ${key === dateKey(now) ? 'today' : ''}`} key={key} onClick={() => setSelected(day)}><span className="day-number">{day.getDate()}</span><div className="task-dots">{items.slice(0, 4).map((task) => <i className={`${task.completed ? 'done' : ''} priority-${task.priority.toLowerCase()}`} key={task.id} />)}</div>{items.length > 4 && <small>+{items.length - 4}</small>}</button>; })}</div></section>
+      <aside className="tasks-panel"><div className="selected-heading"><div><p className="eyebrow">TASKS FOR</p><h2>{selected.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</h2></div><div className="progress-ring"><strong>{doneCount}</strong><span>/{dayTasks.length}</span></div></div><div className="task-entry"><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addTask()} placeholder="What needs to be done?" /><button className="primary-button" onClick={addTask}>Add task</button></div><div className="options-row"><select value={category} onChange={(event) => setCategory(event.target.value)}>{CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select><select value={priority} onChange={(event) => setPriority(event.target.value)}>{PRIORITIES.map((item) => <option key={item}>{item} priority</option>)}</select><select value={repeat} onChange={(event) => setRepeat(event.target.value)}><option value="1">Only today</option><option value="3">3 days</option><option value="7">7 days</option><option value="30">30 days</option></select></div><div className="task-list">{dayTasks.length === 0 ? <div className="empty-state"><span>✦</span><strong>Your day is clear</strong><p>Add a task to get started.</p></div> : dayTasks.map((task) => <article className={`task-item ${task.completed ? 'completed' : ''}`} draggable onDragStart={() => setDragged(task.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => reorder(task.id)} key={task.id}><button className="check-button" onClick={() => toggle(task.id)}>{task.completed ? '✓' : ''}</button>{editing === task.id ? <input className="edit-input" autoFocus value={editValue} onChange={(event) => setEditValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveEdit(task.id); if (event.key === 'Escape') setEditing(null); }} onBlur={() => saveEdit(task.id)} /> : <span className="task-text"><b className={`priority-label ${task.priority.toLowerCase()}`}>{task.priority}</b>{task.text}<small>{task.category}{task.autoGenerated ? ' · recurring' : ''}</small></span>}<div className="task-actions"><button onClick={() => { setEditing(task.id); setEditValue(task.text); }}>✎</button><button onClick={() => remove(task.id)}>×</button></div></article>)}</div><footer className="tasks-footer"><span>{monthTasks.length} tasks this month</span><span>⋮⋮ drag to reorder</span></footer></aside></div>
+    </section>
+  </main>;
 }
 
 export default App;
